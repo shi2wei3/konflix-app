@@ -1,0 +1,59 @@
+discover:
+    how: fmf
+    test: /tmt/tests/rhel-guest-image
+prepare:
+    - name: ansible-playbook
+      how: ansible
+      playbook: tmt/ansible/rhel-guest-image.yml
+execute:
+    how: tmt
+
+/libvirt:
+  tag: libvirt
+  environment+:
+    PLATFORM: libvirt
+  prepare+:
+    - how: install
+      package:
+        - qemu-kvm
+        - libvirt
+        - libvirt-devel
+        - libguestfs
+        - xorriso
+        - python3-virtualenv
+        - python-devel
+        - openssl-devel
+        - gcc
+        - rust
+        - cargo
+        - libxslt
+    - how: shell
+      script: systemctl restart libvirtd
+  adjust+:
+    - when: arch == x86_64 or arch == aarch64
+      provision+:
+        hardware:
+          virtualization:
+            is-supported: true
+
+/cnv:
+  tag: cnv
+  environment+:
+    PLATFORM: cnv
+  prepare+:
+    - how: install
+      package:
+        - openshift-clients
+        - kubevirt-virtctl
+      when: arch == x86_64
+
+/google:
+  tag: google
+  environment+:
+    PLATFORM: google
+  prepare+:
+    - how: install
+      package:
+        - golang
+        - google-cloud-cli
+      when: arch == x86_64

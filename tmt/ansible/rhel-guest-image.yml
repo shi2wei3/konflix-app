@@ -1,0 +1,128 @@
+- name: rhel-guest-image
+  hosts: all
+  vars:
+    data_path: files
+    platform: "{{ lookup('env', 'PLATFORM') | default('', true) }}"
+  gather_facts: yes
+  tasks:
+    - name: Add yum repository for RHEL CRB
+      yum_repository:
+        name: codeready-builder-for-rhel-$releasever-$basearch-rpms
+        file: rhel-crb
+        description: Red Hat CodeReady Linux Builder for RHEL $releasever $basearch (RPMs)
+        baseurl: https://rhsm-pulp.corp.redhat.com/content/dist/rhel$releasever/$releasever/$basearch/codeready-builder/os/
+        gpgcheck: false
+        sslverify: false
+    - name: Add yum repository for RHEL AppStream
+      yum_repository:
+        name: rhel-$releasever-for-$basearch-appstream-rpms
+        file: rhel-appstream
+        description: Red Hat Enterprise Linux $releasever for $basearch - AppStream (RPMs)
+        baseurl: https://rhsm-pulp.corp.redhat.com/content/dist/rhel$releasever/$releasever/$basearch/appstream/os/
+        gpgcheck: false
+        sslverify: false
+    - name: Add yum repository for RHEL BaseOS
+      yum_repository:
+        name: rhel-$releasever-for-$basearch-baseos-rpms
+        file: rhel-baseos
+        description: Red Hat Enterprise Linux $releasever for $basearch - BaseOS (RPMs)
+        baseurl: https://rhsm-pulp.corp.redhat.com/content/dist/rhel$releasever/$releasever/$basearch/baseos/os/
+        gpgcheck: false
+        sslverify: false
+    # - name: Add yum repository for RCM Tools
+    #   yum_repository:
+    #     name: rcm-tools-rhel-$releasever-server-optional-rpms
+    #     file: rcmtools
+    #     description: RCM Tools for Red Hat Enterprise Linux $releasever BaseOS (RPMs)
+    #     baseurl: https://download.devel.redhat.com/rel-eng/RCMTOOLS/latest-RCMTOOLS-2-RHEL-$releasever/compose/BaseOS/$basearch/os/
+    #     gpgcheck: false
+    - name: Add yum repository for rhocp
+      yum_repository:
+        name: rhocp
+        description: rhocp
+        baseurl: https://rhsm-pulp.corp.redhat.com/content/dist/layered/rhel9/$basearch/rhocp/4.15/os/
+        gpgcheck: false
+      when: ansible_architecture == "x86_64"
+    - name: Add yum repository for cnv
+      yum_repository:
+        name: cnv
+        description: cnv
+        baseurl: https://rhsm-pulp.corp.redhat.com/content/dist/layered/rhel9/$basearch/cnv/4.13/os/
+        gpgcheck: false
+      when: ansible_architecture == "x86_64"
+    - name: Add yum repository for gcloud
+      yum_repository:
+        name: google-cloud-cli
+        file: google-cloud-sdk
+        description: Google Cloud CLI
+        baseurl: https://packages.cloud.google.com/yum/repos/cloud-sdk-el9-x86_64
+        gpgcheck: false
+      when: ansible_architecture == "x86_64"
+    - name: Install epel
+      yum:
+        name: https://dl.fedoraproject.org/pub/epel/epel-release-latest-{{ ansible_distribution_major_version }}.noarch.rpm
+        state: present
+        disable_gpg_check: true
+    - name: Install packages
+      yum:
+        name: ['git', 'jq', 'squid', 'podman']
+        state: latest
+    - name: Install libguestfs-tools
+      yum:
+        name: ['libguestfs-tools']
+        state: latest
+      when:
+        - ansible_distribution == 'Red Hat Enterprise Linux'
+        - ansible_distribution_major_version | int < 9
+        - platform == 'libvirt'
+    - name: Install guestfs-tools
+      yum:
+        name: ['guestfs-tools']
+        state: latest
+      when:
+        - ansible_distribution == 'Red Hat Enterprise Linux'
+        - ansible_distribution_major_version | int >= 9
+        - platform == 'libvirt'
+    - name: Install packages on x86_64
+      yum:
+        name: ['brewkoji']
+        state: latest
+      when: ansible_architecture == "x86_64"
+    - name: Install redhat-internal-cert
+      shell: curl -kLO https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem && mv Current-IT-Root-CAs.pem /etc/pki/ca-trust/source/anchors && update-ca-trust
+    - name: Make sure squid is running and enabled
+      systemd:
+        name: squid
+        state: started
+        enabled: true
+    - name: Create /root/etc directory
+      file:
+        path: /root/etc
+        state: directory
+    - name: Copy files
+      copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        force: yes
+      with_items:
+          - { src: "{{data_path}}/rp_conf.json", dest: '/root/etc/' }
+    - name: Creates /root/bin directory
+      file:
+        path: /root/bin
+        state: directory
+    - name: Generate RSA key
+      command:
+        cmd: ssh-keygen -t rsa -f /root/.ssh/id_rsa -N ""
+        creates: /root/.ssh/id_rsa
+    - name: Generate RSA pubkey
+      shell:
+        cmd: ssh-keygen -f /root/.ssh/id_rsa -y > /root/.ssh/id_rsa.pub
+        creates: /root/.ssh/id_rsa.pub
+    - name: Download droute client
+      command:
+        cmd: curl -L https://repository-basic.engineering.redhat.com/nexus/repository/dno-raw/droute-client/1.1/droute-linux-amd64 -o /root/bin/droute
+        creates: /root/bin/droute
+    - name: Change file mode
+      file:
+        path: /root/bin/droute
+        mode: '0755'
