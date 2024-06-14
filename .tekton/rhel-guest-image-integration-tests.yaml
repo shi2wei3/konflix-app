@@ -1,0 +1,67 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: rhel-guest-image integration tests
+spec:
+  description: >-
+    Expects a list of container images to be provided via the SNAPSHOT parameter.
+  params:
+    - name: SNAPSHOT_USER
+      description: A list of container images that should undergo testing
+      type: string
+    - name: GIT_URL
+      description: URL of the GIT repository that contains the tests.
+      default: "https://gitlab.cee.redhat.com/virtcloud-qe/xen-ci"
+      type: string
+    - name: GIT_REF
+      default: "master"
+      description: Branch of the git repository used containing the tests
+      type: string
+    - name: COMPOSE
+      default: "RHEL-9.2.0-Nightly"
+      description: Compose to use for the system-under-test.
+      type: string
+    - name: ARCH
+      default: "x86_64"
+      description: Comma-separated list of architectures to run against.
+      type: string
+    - name: TIMEOUT
+      default: "720"
+      description: Set the timeout for the request in minutes. If the test takes longer than this, it will be terminated.
+      type: string
+    - name: TESTING_FARM_API_URL
+      default: https://api.dev.testing-farm.io/v0.1
+      description: The testing-farm instance API to use
+      type: string
+    - name: DEBUG_OUTPUT
+      default: "0"
+      type: string
+  tasks:
+    - name: testing-farm
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: $(params.GIT_URL)
+          - name: revision
+            value: $(params.GIT_REF)
+          - name: pathInRepo
+            value: konflux/rhel-guest-image/testing-farm.yaml
+      params:
+        - name: SNAPSHOT_USER
+          value: $(params.SNAPSHOT_USER)
+        - name: GIT_URL
+          value: $(params.GIT_URL)
+        - name: GIT_REF
+          value: $(params.GIT_REF)
+        - name: COMPOSE
+          value: $(params.COMPOSE)
+        - name: ARCH
+          value: $(params.ARCH)
+        - name: TIMEOUT
+          value: $(params.TIMEOUT)
+        - name: TESTING_FARM_API_URL
+          value: $(params.TESTING_FARM_API_URL)
+        - name: DEBUG_OUTPUT
+          value: $(params.DEBUG_OUTPUT)
+      timeout: "2h"

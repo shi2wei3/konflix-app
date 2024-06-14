@@ -1,0 +1,126 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: testing-farm
+spec:
+  description: Initiate testing-farm test given a list of container images
+  params:
+    - name: SNAPSHOT_USER
+      description: A list of container images that should undergo testing
+    - name: GIT_URL
+      description: URL of the GIT repository that contains the tests.
+    - name: GIT_REF
+      description: Branch of the git repository used containing the tests
+    - name: COMPOSE
+      description: Compose to use for the system-under-test.
+    - name: ARCH
+      description: Comma-separated list of architectures to run against.
+    - name: TIMEOUT
+      description: Set the timeout for the request in minutes. If the test takes longer than this, it will be terminated.
+    - name: TESTING_FARM_API_URL
+      description: The testing-farm instance API to use
+    - name: DEBUG_OUTPUT
+  volumes:
+    - name: rhel-guest-image-secret
+      secret:
+        secretName: rhel-guest-image-secret
+  steps:
+    - image: quay.io/testing-farm/cli:latest
+      volumeMounts:
+        - name: rhel-guest-image-secret
+          mountPath: "/etc/secrets"
+          readOnly: true
+      env:
+        - name: SNAPSHOT_USER
+          value: $(params.SNAPSHOT_USER)
+        - name: GIT_URL
+          value: $(params.GIT_URL)
+        - name: GIT_REF
+          value: $(params.GIT_REF)
+        - name: COMPOSE
+          value: $(params.COMPOSE)
+        - name: ARCH
+          value: $(params.ARCH)
+        - name: TIMEOUT
+          value: $(params.TIMEOUT)
+        - name: TESTING_FARM_API_URL
+          value: $(params.TESTING_FARM_API_URL)
+        - name: DEBUG_OUTPUT
+          value: $(params.DEBUG_OUTPUT)
+      script: |
+        #!/usr/bin/env bash
+        [[ "${DEBUG_OUTPUT}" == "1" ]] && set -x
+
+        export TESTING_FARM_API_TOKEN=$(cat /etc/secrets/testing-farm-token)
+        QUAY_USERNAME=$(cat /etc/secrets/QUAY_USERNAME)
+        QUAY_PASSWORD=$(cat /etc/secrets/QUAY_PASSWORD)
+        SECRET=$(cat /etc/secrets/SECRET)
+        SUPERADMIN_TOKEN=$(cat /etc/secrets/SUPERADMIN_TOKEN)
+        DROUTE_PW=$(cat /etc/secrets/DROUTE_PW)
+
+        apk add skopeo jq grep curl
+
+        # TODO: switch to snapshot
+        echo "$SNAPSHOT"
+        IMAGES=$(echo "${SNAPSHOT_USER}" | jq -r '.components[].containerImage')
+        COUNT=0
+        for IMAGE in $IMAGES; do
+          echo $IMAGE
+          skopeo inspect docker://"$IMAGE" > skopeo_inspect.json
+          cat skopeo_inspect.json
+          IMAGE_NAME=$(echo "${IMAGE##*/}" | cut -d @ -f 1)
+          IMAGE_TAG=$(echo "${IMAGE##*/}" | cut -d : -f 2)
+          skopeo copy --dest-creds "${QUAY_USERNAME}":"${QUAY_PASSWORD}" docker://"$IMAGE" docker://quay.io/redhat_emp1/qe-"${IMAGE_NAME}:${IMAGE_TAG}"
+          IMAGE_URL=quay.io/redhat_emp1/qe-"${IMAGE_NAME}:${IMAGE_TAG}"
+          echo "$IMAGE_URL"
+          # TODO: pass nvr or snapshot directly
+          IMAGE_TAG=$(jq -r '.RepoTags' skopeo_inspect.json)
+          NVR="rhel-guest-image-container-${IMAGE_TAG}"
+          echo "$NVR"
+          COUNT=$(expr $COUNT + 1)
+        done
+
+        if [[ ${COUNT} -ne 1 ]]; then
+          echo "Error: multiple images in this application: ${IMAGES}"
+          exit 1
+        fi
+
+        testing-farm request \
+          --plan-filter "tag: cnv" \
+          --environment BUILD_NAME="${NVR}" \
+          --environment BUILD_URL="job/rhel-guest-image-container-cnv-pipeline" \
+          --secret SECRET="${SECRET}" \
+          --secret SUPERADMIN_TOKEN="${SUPERADMIN_TOKEN}" \
+          --secret DROUTE_PW="${DROUTE_PW}" \
+          --git-url "${GIT_URL}" \
+          --git-ref "${GIT_REF}" \
+          --compose "${COMPOSE}" \
+          --arch "${ARCH}" \
+          --hardware virtualization.is-virtualized=true \
+          --timeout "${TIMEOUT}" \
+          --no-wait | tee tf_stdout.txt
+
+        R_ID=$(grep -oP '(?<=https://api.dev.testing-farm.io/v0.1/requests/)[0-9a-z-]+' tf_stdout.txt)
+        TF_ARTIFACTS_URL="http://artifacts.osci.redhat.com/testing-farm/${R_ID}"
+
+        PREV_STATE="none"
+        while true; do
+          STATE=$(curl --retry 10 --retry-connrefused --connect-timeout 10 --retry-delay 30 -s "https://api.dev.testing-farm.io/v0.1/requests/$R_ID" | jq -r '.state')
+          if [ "$STATE" = "complete" ] || [ "$STATE" = "error" ]; then
+            echo "Done! The current state is \"$STATE\"."
+            break
+          fi
+          if [ "$STATE" != "$PREV_STATE" ]; then
+            echo "The current state is \"$STATE\"."
+            echo "Waiting for Testing Farm..."
+          fi
+          PREV_STATE="$STATE"
+          sleep 90
+        done
+
+        TF_ARTIFACTS_URL=$(curl -sk "https://api.dev.testing-farm.io/v0.1/requests/$R_ID" | jq -r '.run.artifacts')
+        echo "Artifacts URL is \"$TF_ARTIFACTS_URL\""
+        OVERALL_RESULT=$(curl -sk "https://api.dev.testing-farm.io/v0.1/requests/$R_ID" | jq -r '.result.overall')
+        echo "Test result is \"$OVERALL_RESULT\""
+        [[ "$OVERALL_RESULT" == "passed" ]] || exit 1
+      timeout: "2h"
