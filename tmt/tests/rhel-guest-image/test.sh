@@ -1,1 +1,0 @@
-../../../utils/rhel_guest_image_runtest.sh
