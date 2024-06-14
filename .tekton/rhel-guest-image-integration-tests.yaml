@@ -9,6 +9,14 @@ spec:
     - name: SNAPSHOT_USER
       description: A list of container images that should undergo testing
       type: string
+    - name: TF_GIT_URL
+      description: URL of the GIT repository that contains the tests.
+      default: "https://gitlab.cee.redhat.com/virtcloud-qe/xen-ci"
+      type: string
+    - name: TF_GIT_REF
+      default: "master"
+      description: Branch of the git repository used containing the tests
+      type: string
     - name: GIT_URL
       description: URL of the GIT repository that contains the tests.
       default: "https://gitlab.cee.redhat.com/virtcloud-qe/xen-ci"
@@ -42,9 +50,9 @@ spec:
         resolver: git
         params:
           - name: url
-            value: $(params.GIT_URL)
+            value: $(params.TF_GIT_URL)
           - name: revision
-            value: $(params.GIT_REF)
+            value: $(params.TF_GIT_REF)
           - name: pathInRepo
             value: .tekton/testing-farm.yaml
       params:
