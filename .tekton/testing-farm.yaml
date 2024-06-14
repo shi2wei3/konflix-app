@@ -74,7 +74,7 @@ spec:
           IMAGE_URL=quay.io/redhat_emp1/qe-"${IMAGE_NAME}:${IMAGE_TAG}"
           echo "$IMAGE_URL"
           # TODO: pass nvr or snapshot directly
-          IMAGE_TAG=$(jq -r '.RepoTags' skopeo_inspect.json)
+          IMAGE_TAG=$(jq -r '.RepoTags[0]' skopeo_inspect.json)
           NVR="rhel-guest-image-container-${IMAGE_TAG}"
           echo "$NVR"
           COUNT=$(expr $COUNT + 1)
